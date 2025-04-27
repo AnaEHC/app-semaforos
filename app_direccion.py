@@ -11,20 +11,11 @@ from fpdf import FPDF
 st.set_page_config(page_title="App Semáforos Web + Closers", page_icon="🚦", layout="wide")
 
 # --- CONEXIÓN GOOGLE DRIVE ---
-import json
-
-# Definimos primero los permisos
+SERVICE_ACCOUNT_FILE = 'C:/Users/user/Desktop/APP DIRECCION/CREDENCIALES/semaforo-direccion-c20318ce5a60.json'
 SCOPES = ['https://www.googleapis.com/auth/drive']
-
-# Leemos las credenciales del secret de Streamlit
-credentials_info = json.loads(st.secrets["gcp_service_account"])
-credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
-
-
-# Creamos el servicio de Google Drive
+credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build('drive', 'v3', credentials=credentials)
 
-# IDs de tus carpetas y base de asignaciones
 ID_CARPETA_PADRE = '1Sh2Pt_ZsKNrRz6GM6NbON0ICapYovCyS'
 ID_BASE_ASIGNACIONES = '1XhxVi0YRCfZmeqEgKaJJo6SSbBq7UVgm'
 
@@ -420,3 +411,4 @@ elif opcion == "📖 Manual de Usuario":
     st.divider()
 
     st.success("¡Ahora estás listo/a para trabajar a toda máquina! 🚀")
+
