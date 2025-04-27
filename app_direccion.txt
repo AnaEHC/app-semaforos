@@ -1,0 +1,287 @@
+import streamlit as st
+import pandas as pd
+import io
+import os
+from datetime import datetime
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+from google.oauth2 import service_account
+from fpdf import FPDF
+
+# CONFIGURACIÓN DE CONEXIÓN
+SERVICE_ACCOUNT_FILE = 'C:/Users/user/Desktop/APP DIRECCION/CREDENCIALES/semaforo-direccion-c20318ce5a60.json'
+SCOPES = ['https://www.googleapis.com/auth/drive']
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+)
+service = build('drive', 'v3', credentials=credentials)
+
+# ID carpeta principal
+ID_CARPETA_PADRE = '1Sh2Pt_ZsKNrRz6GM6NbON0ICapYovCyS'
+ID_BASE_ASIGNACIONES = '1XhxVi0YRCfZmeqEgKaJJo6SSbBq7UVgm'
+
+# FUNCIONES AUXILIARES
+
+def buscar_id_carpeta(nombre_carpeta):
+    query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{nombre_carpeta}' and '{ID_CARPETA_PADRE}' in parents"
+    resultados = service.files().list(q=query, fields="files(id, name)").execute()
+    archivos = resultados.get('files', [])
+    if archivos:
+        return archivos[0]['id']
+    return None
+
+def listar_archivos_en_carpeta(carpeta_id):
+    query = f"'{carpeta_id}' in parents and trashed = false"
+    resultados = service.files().list(q=query, fields="files(id, name)").execute()
+    archivos = resultados.get('files', [])
+    return archivos
+
+def buscar_semaforo_en_carpeta(id_carpeta):
+    query = f"mimeType != 'application/vnd.google-apps.folder' and name contains 'SEMAFORO' and name contains '.xlsm' and '{id_carpeta}' in parents"
+    resultados = service.files().list(q=query, fields="files(id, name)").execute()
+    archivos = resultados.get('files', [])
+    if archivos:
+        return archivos[0]['id'], archivos[0]['name']
+    return None, None
+
+def descargar_archivo(file_id):
+    try:
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        fh.seek(0)
+        df = pd.read_excel(fh)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def descargar_base_asignaciones():
+    try:
+        request = service.files().get_media(fileId=ID_BASE_ASIGNACIONES)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        fh.seek(0)
+        df = pd.read_excel(fh)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def guardar_base_asignaciones(df):
+    temp_path = "temp_base_asignaciones.xlsx"
+    with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    media = MediaFileUpload(temp_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    service.files().update(fileId=ID_BASE_ASIGNACIONES, media_body=media).execute()
+    try:
+        os.remove(temp_path)
+    except Exception:
+        pass
+
+def limpiar_texto(texto):
+    """Quita emojis, convierte checks a SI/NO, y deja celdas vacías si no hay valor."""
+    if str(texto).strip() == '✅':
+        return 'SI'
+    elif str(texto).strip() == '❌':
+        return 'NO'
+    elif pd.isna(texto) or str(texto).lower() == 'nan':
+        return ''
+    else:
+        return ''.join(c for c in str(texto) if ord(c) < 256)
+
+def generar_pdf(df, nombre_archivo):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')  # 🚨 Landscape (horizontal)
+    pdf.add_page()
+    pdf.set_font("Arial", size=8)
+    
+    page_width = pdf.w - 2 * pdf.l_margin
+    col_width = page_width / (len(df.columns) + 0.5)
+    row_height = pdf.font_size * 2
+
+    for col in df.columns:
+        pdf.cell(col_width, row_height, limpiar_texto(col), border=1)
+    pdf.ln(row_height)
+
+    for index, row in df.iterrows():
+        for item in row:
+            pdf.cell(col_width, row_height, limpiar_texto(item), border=1)
+        pdf.ln(row_height)
+
+    pdf.output(nombre_archivo)
+# INICIO APP
+st.set_page_config(page_title="App Semáforos Web + Closers", page_icon="🚦", layout="wide")
+st.sidebar.title("🚦 Menú Principal")
+
+# CARGA INICIAL (MODO TURBO)
+
+if 'datos_cargados' not in st.session_state:
+    with st.spinner('📢 Cargando datos iniciales... ¡Un momento, por favor!'):
+        semaforos_carpetas = {
+            "SEMAFORO ELCHE 2.0": "COMPARTIDO ELCHE 2.0",
+            "SEMAFORO ELCHE 3.0": "COMPARTIDO ELCHE 3.0",
+            "SEMAFORO ELCHE 4.0": "COMPARTIDO ELCHE 4.0",
+            "SEMAFORO VIGO 1.0": "COMPARTIDO VIGO 1.0",
+            "SEMAFORO VIGO 2.0": "COMPARTIDO VIGO 2.0",
+            "SEMAFORO VIGO 3.0": "COMPARTIDO VIGO 3.0",
+            "SEMAFORO LEON 1.0": "COMPARTIDO LEON 1.0"
+        }
+
+        st.session_state['clientes_rojos'] = []
+        for nombre_semaforo, nombre_carpeta in semaforos_carpetas.items():
+            carpeta_id = buscar_id_carpeta(nombre_carpeta)
+            if carpeta_id:
+                archivos = listar_archivos_en_carpeta(carpeta_id)
+                archivo_semaforo = next((a for a in archivos if a['name'].startswith("SEMAFORO") and a['name'].endswith(".xlsm")), None)
+                if archivo_semaforo:
+                    df = descargar_archivo(archivo_semaforo['id'])
+                    if not df.empty:
+                        if 'DÍA' in df.columns:
+                            df['DÍA'] = pd.to_datetime(df['DÍA'], errors='coerce').dt.strftime('%d/%m/%Y')
+                        df_rojos = df[df["SEMAFORO"] == "ROJO"]
+                        st.session_state['clientes_rojos'].append(df_rojos)
+
+        # Unir todos los clientes ROJOS en uno solo
+        if st.session_state['clientes_rojos']:
+            st.session_state['clientes_rojos'] = pd.concat(st.session_state['clientes_rojos'], ignore_index=True)
+            st.session_state['clientes_rojos']["CLOSER ASIGNADO"] = ""
+
+        # Cargar seguimiento
+        df_asignaciones = descargar_base_asignaciones()
+        if not df_asignaciones.empty:
+            if 'DÍA' in df_asignaciones.columns:
+                df_asignaciones['DÍA'] = pd.to_datetime(df_asignaciones['DÍA'], errors='coerce').dt.strftime('%d/%m/%Y')
+            if 'ESTADO' in df_asignaciones.columns:
+                df_asignaciones['ESTADO'] = df_asignaciones['ESTADO'].astype(str)
+            df_asignaciones['selected'] = False
+            st.session_state['seguimiento'] = df_asignaciones
+        else:
+            st.session_state['seguimiento'] = pd.DataFrame()
+
+        st.session_state['datos_cargados'] = True
+
+# MENÚ
+opcion = st.sidebar.radio("Ir a:", ("🏠 Inicio", "📂 Semáforos Comerciales", "🎯 Asignar Closers", "📋 Seguimiento de Asignaciones"))
+
+if opcion == "🏠 Inicio":
+    st.title("🚦 Bienvenida a la App de Semáforos Web + Closers")
+    st.success("¡Todo listo para trabajar! 🚀")
+
+elif opcion == "📂 Semáforos Comerciales":
+    st.title("📂 Semáforos Comerciales")
+    semaforo_elegido = st.selectbox("Selecciona un Semáforo:", list(semaforos_carpetas.keys()))
+    carpeta_nombre = semaforos_carpetas[semaforo_elegido]
+    carpeta_id = buscar_id_carpeta(carpeta_nombre)
+    if carpeta_id:
+        file_id, file_name = buscar_semaforo_en_carpeta(carpeta_id)
+        if file_id:
+            df_semaforo = descargar_archivo(file_id)
+            st.dataframe(df_semaforo, use_container_width=True)
+        else:
+            st.warning(f"⚠️ No se encontró archivo SEMÁFORO en {carpeta_nombre}.")
+    else:
+        st.warning(f"⚠️ No se encontró carpeta {carpeta_nombre}.")
+
+elif opcion == "🎯 Asignar Closers":
+    st.title("🎯 Asignar Closers")
+    if st.session_state['clientes_rojos'].empty:
+        st.info("ℹ️ No hay clientes ROJOS pendientes.")
+    else:
+        edited_df = st.data_editor(
+            st.session_state['clientes_rojos'],
+            column_config={
+                "CALL": st.column_config.TextColumn(disabled=True),
+                "COMERCIAL": st.column_config.TextColumn(disabled=True),
+                "CLIENTE": st.column_config.TextColumn(disabled=True),
+                "DÍA": st.column_config.TextColumn(disabled=True),
+                "F2025": st.column_config.TextColumn(disabled=True),
+                "F2026": st.column_config.TextColumn(disabled=True),
+                "HL": st.column_config.TextColumn(disabled=True),
+                "VIGILANCIA": st.column_config.TextColumn(disabled=True),
+                "IMPLANT": st.column_config.TextColumn(disabled=True),
+                "DENUNCIAS": st.column_config.TextColumn(disabled=True),
+                "SEMAFORO": st.column_config.TextColumn(disabled=True),
+                "NOTAS": st.column_config.TextColumn(disabled=True),
+                "CLOSER ASIGNADO": st.column_config.TextColumn(help="Escribe aquí el nombre del Closer"),
+            },
+            use_container_width=True,
+            num_rows="dynamic",
+        )
+
+        if st.button("✅ Asignar Clientes"):
+            nuevas_asignaciones = []
+            for _, row in edited_df.iterrows():
+                if row["CLOSER ASIGNADO"].strip():
+                    nueva_asignacion = row.to_dict()
+                    nueva_asignacion["ESTADO"] = ""
+                    nuevas_asignaciones.append(nueva_asignacion)
+
+            if nuevas_asignaciones:
+                df_nuevas = pd.DataFrame(nuevas_asignaciones)
+                df_existente = descargar_base_asignaciones()
+                df_final = pd.concat([df_existente, df_nuevas], ignore_index=True)
+                guardar_base_asignaciones(df_final)
+                st.success("✅ Clientes asignados correctamente.")
+                st.session_state['clientes_rojos'] = st.session_state['clientes_rojos'][st.session_state['clientes_rojos']["CLOSER ASIGNADO"].str.strip() == ""]
+                st.rerun()
+            else:
+                st.warning("⚠️ No has asignado ningún Closer.")
+elif opcion == "📋 Seguimiento de Asignaciones":
+    st.title("📋 Seguimiento de Asignaciones")
+
+    if st.session_state['seguimiento'].empty:
+        st.info("ℹ️ No hay asignaciones registradas todavía.")
+    else:
+        columnas_mostrar = [
+            "CALL", "COMERCIAL", "CLIENTE", "DÍA",
+            "F2025", "F2026", "HL", "VIGILANCIA",
+            "IMPLANT", "DENUNCIAS", "SEMAFORO",
+            "NOTAS", "CLOSER ASIGNADO", "ESTADO"
+        ]
+
+        edited_df = st.data_editor(
+            st.session_state['seguimiento'],
+            column_order=["selected"] + columnas_mostrar,
+            column_config={
+                "selected": st.column_config.CheckboxColumn(label=""),
+                "CALL": st.column_config.TextColumn(disabled=True),
+                "COMERCIAL": st.column_config.TextColumn(disabled=True),
+                "CLIENTE": st.column_config.TextColumn(disabled=True),
+                "DÍA": st.column_config.TextColumn(disabled=True),
+                "F2025": st.column_config.TextColumn(disabled=True),
+                "F2026": st.column_config.TextColumn(disabled=True),
+                "HL": st.column_config.TextColumn(disabled=True),
+                "VIGILANCIA": st.column_config.TextColumn(disabled=True),
+                "IMPLANT": st.column_config.TextColumn(disabled=True),
+                "DENUNCIAS": st.column_config.TextColumn(disabled=True),
+                "SEMAFORO": st.column_config.TextColumn(disabled=True),
+                "NOTAS": st.column_config.TextColumn(disabled=True),
+                "CLOSER ASIGNADO": st.column_config.TextColumn(disabled=True),
+                "ESTADO": st.column_config.TextColumn(help="Escribe el Estado final del cliente"),
+            },
+            use_container_width=True,
+            num_rows="dynamic",
+        )
+
+        col1, col2 = st.columns([1,1])
+
+        with col1:
+            if st.button("🗑️ Borrar Asignados"):
+                df_filtrado = edited_df[edited_df["selected"] != True]
+                df_filtrado = df_filtrado.drop(columns=["selected"])
+                guardar_base_asignaciones(df_filtrado)
+                st.success("✅ Asignados borrados correctamente.")
+                st.session_state['seguimiento'] = df_filtrado
+                st.rerun()
+
+        with col2:
+            if st.button("⬇️ Descargar PDF"):
+                nombre_pdf = "seguimiento_asignaciones.pdf"
+                df_para_pdf = edited_df.drop(columns=["selected"])
+                generar_pdf(df_para_pdf, nombre_pdf)
+                with open(nombre_pdf, "rb") as file:
+                    st.download_button("Descargar Seguimiento PDF", file, file_name=nombre_pdf)
