@@ -13,12 +13,13 @@ st.set_page_config(page_title="App Semáforos Web + Closers", page_icon="🚦", 
 # --- CONEXIÓN GOOGLE DRIVE ---
 import json
 
-# Primero definimos el Scope
+# Definimos primero los permisos
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-# Leemos las credenciales desde los secretos de Streamlit
+# Leemos las credenciales del secret de Streamlit
 credentials_info = json.loads(st.secrets["gcp_service_account"])
 credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+
 
 # Creamos el servicio de Google Drive
 service = build('drive', 'v3', credentials=credentials)
@@ -26,7 +27,6 @@ service = build('drive', 'v3', credentials=credentials)
 # IDs de tus carpetas y base de asignaciones
 ID_CARPETA_PADRE = '1Sh2Pt_ZsKNrRz6GM6NbON0ICapYovCyS'
 ID_BASE_ASIGNACIONES = '1XhxVi0YRCfZmeqEgKaJJo6SSbBq7UVgm'
-
 
 # --- FUNCIONES AUXILIARES ---
 
