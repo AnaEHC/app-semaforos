@@ -1,6 +1,8 @@
+# --- IMPORTS ---
 import streamlit as st
 import pandas as pd
 import io
+import json
 from datetime import datetime
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -11,11 +13,16 @@ from fpdf import FPDF
 st.set_page_config(page_title="App Semáforos Web + Closers", page_icon="🚦", layout="wide")
 
 # --- CONEXIÓN GOOGLE DRIVE ---
-SERVICE_ACCOUNT_FILE = 'C:/Users/user/Desktop/APP DIRECCION/CREDENCIALES/semaforo-direccion-c20318ce5a60.json'
 SCOPES = ['https://www.googleapis.com/auth/drive']
-credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+# Leemos las credenciales desde los secretos de Streamlit
+credentials_info = json.loads(st.secrets["gcp_service_account"])
+credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+
+# Creamos el servicio de conexión a Drive
 service = build('drive', 'v3', credentials=credentials)
 
+# IDs de carpeta y base de datos
 ID_CARPETA_PADRE = '1Sh2Pt_ZsKNrRz6GM6NbON0ICapYovCyS'
 ID_BASE_ASIGNACIONES = '1XhxVi0YRCfZmeqEgKaJJo6SSbBq7UVgm'
 
