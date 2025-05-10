@@ -230,7 +230,7 @@ elif opcion == "🎯 Asignar Closers":
                 closers_creados = {}  # 🔥 Creamos un diccionario para los nuevos closers
 
                 for _, row in edited_df.iterrows():
-                    closer = str(row["CLOSER ASIGNADO"]).strip()
+                    closer = str(row["CLOSER"]).strip()
                     if closer:
                         nueva = row.to_dict()
                         nueva["CLOSER"] = closer
@@ -254,7 +254,7 @@ elif opcion == "🎯 Asignar Closers":
                         mover_archivo_a_carpeta(closer, pd.DataFrame(clientes))
 
                     # 🔥 Actualizar clientes rojos (solo los no asignados)
-                    clientes_restantes = edited_df[edited_df["CLOSER ASIGNADO"].astype(str).str.strip() == ""]
+                    clientes_restantes = edited_df[edited_df["CLOSER"].astype(str).str.strip() == ""]
                     st.session_state['clientes_rojos'] = clientes_restantes
 
                     st.success("✅ Clientes asignados y archivos de Closers creados correctamente.")
